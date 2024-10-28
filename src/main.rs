@@ -2,9 +2,15 @@ use std::fs;
 use reqwest;
 use std::path::PathBuf;
 use serde_json::Value;
+use std::process::Command;
+use std::{thread, time};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    
+
+    
     // ==== Get the most current Minecraft version online ==========================================
     let version_manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
     let response = reqwest::get(version_manifest_url).await?.text().await?;
@@ -34,6 +40,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==== Compare with release versions and update if needed ======================================
     if old_version.trim() != latest_version { 
 
+        // ---- Stop the current minecraft server from running --------------------------------------
+        stop_minecraft_server();
+        wait_for_minecraft_shutdown();
+        // ------------------------------------------------------------------------------------------
+
         // ---- Back up the server.jar file and its version -----------------------------------------
         let backup_file_name = if old_version.trim().is_empty() {
             "backup/server_old.jar"
@@ -60,6 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         fs::write("server.jar", server_jar_response)?;
         println!("Download done.");
         // ------------------------------------------------------------------------------------------
+
+        // ---- Start minecraft server up again -----------------------------------------------------
+        start_minecraft_server();
+        // ------------------------------------------------------------------------------------------
     } else {
         println!("Minecraft server is already up to date.");
     }
@@ -67,3 +82,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+fn stop_minecraft_server() {
+    // Assuming your Minecraft server is running in a screen session named "minecraft"
+    let status = Command::new("screen")
+        .args(&["-S", "minecraft", "-X", "stuff", "stop\n"])
+        .status()
+        .expect("Failed to stop Minecraft server");
+    if status.success() {
+        println!("Minecraft server stopped successfully.");
+    } else {
+        println!("Failed to stop Minecraft server.");
+    }
+}
+
+fn start_minecraft_server() {
+    let status = Command::new("screen")
+        .args(&["-dmS", "minecraft", "java", "-Xmx1024M", "-Xms1024M", "-jar", "server.jar", "nogui"])
+        .status()
+        .expect("Failed to start Minecraft server");
+    if status.success() {
+        println!("Minecraft server started successfully.");
+    } else {
+        println!("Failed to start Minecraft server.");
+    }
+}
+
+fn wait_for_minecraft_shutdown() {
+    // Poll every 5 seconds to check if the Minecraft server is still running
+    let wait_time = time::Duration::from_secs(5);
+    loop {
+        let result = Command::new("screen")
+            .args(&["-ls"])
+            .output()
+            .expect("Failed to list screen sessions");
+        let output = String::from_utf8_lossy(&result.stdout);
+
+        // Check if the "minecraft" session is still listed
+        if !output.contains("minecraft") {
+            println!("Minecraft server has fully shut down.");
+            break;
+        }
+
+        println!("Waiting for Minecraft server to shut down...");
+        thread::sleep(wait_time);
+    }
+}
+
+
